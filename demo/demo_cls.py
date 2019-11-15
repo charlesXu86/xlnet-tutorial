@@ -1,6 +1,7 @@
 # -*- coding: UTF-8 -*-
 
 import os
+import sys
 import pathlib
 import keras
 from demo.xlnet_embedding import sentence2idx, idx2sentence, XlnetEmbedding
@@ -13,6 +14,7 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 import numpy as np
 import codecs
 
+sys.path.append('..')
 basedir = str(pathlib.Path(os.path.abspath(__file__)).parent.parent)
 
 
