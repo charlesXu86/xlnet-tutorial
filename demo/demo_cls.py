@@ -4,7 +4,7 @@ import os
 import sys
 import pathlib
 import keras
-from demo.xlnet_embedding import sentence2idx, idx2sentence, XlnetEmbedding
+from xlnet_embedding import sentence2idx, idx2sentence, XlnetEmbedding
 from keras.layers import Dense, Input, GlobalAveragePooling1D
 from keras.models import Model
 from keras.optimizers import Adam
@@ -14,7 +14,6 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 import numpy as np
 import codecs
 
-sys.path.append('..')
 basedir = str(pathlib.Path(os.path.abspath(__file__)).parent.parent)
 
 
@@ -43,15 +42,15 @@ def get_config():
         'len_max': 30,  # 句子最大长度, 固定推荐20-50, bert越长会越慢, 占用空间也会变大, 小心OOM
         'label': 10,  # 类别数
         'batch_size': 16,
-        'epochs': 5,  # 训练最大轮次
+        'epochs': 1,  # 训练最大轮次
         'patience': 3,  # 早停,2-3就好
         'lr': 5e-5,  # 学习率
-        'model_path': './model/model.h5',  # 模型保存地址
+        'model_path': '/home/xsq/nlp_code/xlnet-tutorial/demo/model/model.h5',  # 模型保存地址
     }
 
     xlnet_hyper = {
         # 下载的参数路径
-        'model_path': "./chinese_xlnet_base_L-12_H-768_A-12",
+        'model_path': "/Data/public/XLNet/chinese_xlnet_base_L-12_H-768_A-12",
         # 微调后保存地址
         'path_fineture': "./model/embedding_trainable.h5",
         # 选择输出的层数 范围 [0, 12(24)], 12或24取决于用的是base还是mid, -1即最后一层 12/24
@@ -233,15 +232,16 @@ def predict(filename, outfile="predict_result.txt"):
     # batsh_size 可以改大一点，但是必须可以整除样本数量
     y_pred = model.predict(encoded_x_pre, batch_size=1)
     y_pred = np.argmax(y_pred, axis=1)
-    outfile = codecs.open(outfile, "w", "UTF-8")
-    result = list(zip(X_pre, y_pred))
-    for group in result:
-        outfile.write("{}\t{}\n".format(group[0], group[1]))
-    outfile.close()
+    print(y_pred)
+    # outfile = codecs.open(outfile, "w", "UTF-8")
+    # result = list(zip(X_pre, y_pred))
+    # for group in result:
+    #     outfile.write("{}\t{}\n".format(group[0], group[1]))
+    # outfile.close()
 
 
 if __name__ == '__main__':
     init()
-    train(basedir + "/data/cls/train.txt")
-    test(basedir + "/data/cls/test.txt")
+    # train(basedir + "/data/cls/train.txt")
+    # test(basedir + "/data/cls/test.txt")
     predict(basedir + "/data/cls/predict.txt")

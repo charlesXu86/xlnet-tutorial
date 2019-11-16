@@ -4,7 +4,6 @@ import os
 import codecs
 import numpy as np
 from keras.models import Input, Model
-from keras_bert.layers import Extract
 from keras_xlnet import load_trained_model_from_checkpoint
 from keras.layers import Add, Embedding, Average, Maximum, Concatenate, Lambda
 from keras_xlnet import Tokenizer, ATTENTION_TYPE_BI, ATTENTION_TYPE_UNI
