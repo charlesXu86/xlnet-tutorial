@@ -464,7 +464,7 @@ def main():
         eval_examples = processor.get_devtest_examples(cf.data_dir, cf.eval_split)
         tf.logging.info("Num of eval samples: {}".format(len(eval_examples)))
 
-    if cf.do_eval:
+    # if cf.do_eval:
         # TPU requires a fixed batch size for all batches, therefore the number
         # of examples must be a multiple of the batch size, or else examples
         # will get dropped. So we pad with fake examples which are ignored
