@@ -1,3 +1,18 @@
+# -*- coding: utf-8 -*-
+
+'''
+@Author  :   Xu
+
+@Software:   PyCharm
+
+@File    :   sentiment_classifier.py
+
+@Time    :   2019-09-15 08:22
+
+@Desc    :
+
+'''
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function

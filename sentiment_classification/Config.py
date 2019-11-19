@@ -33,7 +33,7 @@ class Config(object):
 		self.dev_examples_len = 3000
 		self.max_seq_length = 100
 		self.num_labels = 10
-		self.batch_size = 32
+		self.batch_size = 16
 		self.num_train_epochs = 2
 		self.eval_per_step = 500
 		self.learning_rate = 1e-5
