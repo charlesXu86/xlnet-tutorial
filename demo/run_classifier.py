@@ -9,6 +9,7 @@ import collections
 import os
 import time
 import json
+import random
 
 import tensorflow as tf
 import numpy as np
@@ -134,63 +135,71 @@ class ClassificationProcessor(object):
                  task_name):
         self.data_dir = data_dir
         self.task_name = task_name
+        self.label = []
 
     def get_train_examples(self):
         """Gets a collection of `InputExample`s for the train set."""
-        data_path = os.path.join(self.data_dir, "train.tsv")
-        data_list = self._read_json(data_path)
-        example_list = self._get_example(data_list)
+        data_path = os.path.join(self.data_dir, "train.txt")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
         return example_list
-    
-    def get_dev_examples(self):
-        """Gets a collection of `InputExample`s for the dev set."""
-        data_path = os.path.join(self.data_dir, "dev.txt")
-        data_list = self._read_json(data_path)
-        example_list = self._get_example(data_list)
-        return example_list
-    
+
     def get_test_examples(self):
         """Gets a collection of `InputExample`s for the test set."""
         data_path = os.path.join(self.data_dir, "test.txt")
-        data_list = self._read_json(data_path)
-        example_list = self._get_example(data_list)
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
         return example_list
+
+    def get_dev_examples(self):
+        """Gets a collection of `InputExample`s for the dev set."""
+        data_path = os.path.join(self.data_dir, "dev.txt")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
+        return example_list
+
     
     def get_sent_labels(self):
         """Gets the list of sentence labels for this data set."""
-        data_path = os.path.join(self.data_dir, "resource", "sent_label.vocab")
-        sent_labels = self._read_text(data_path)
-        return sent_labels
-    
-    def _read_text(self, data_path):
-        if os.path.exists(data_path):
-            with open(data_path, "rb") as file:
-                data_list = []
-                for line in file:
-                    data_list.append(line.decode("utf-8").strip())
 
-                return data_list
-        else:
-            raise FileNotFoundError("data path not found: {0}".format(data_path))
-    
-    def _read_json(self, data_path):
-        if os.path.exists(data_path):
-            with open(data_path, "r") as file:
-                data_list = json.load(file)
-                return data_list
-        else:
-            raise FileNotFoundError("data path not found: {0}".format(data_path))
-    
-    def _get_example(self, data_list):
-        example_list = []
-        for data in data_list:
-            guid = data["id"]
-            text = data["text"]
-            sent_label = data["sent_label"]
-            example = InputExample(guid=guid, text=text, sent_label=sent_label)
-            example_list.append(example)
-        
-        return example_list
+        return [0, 1]
+
 
 class XLNetTokenizer(object):
     """Default text tokenizer for XLNet"""
