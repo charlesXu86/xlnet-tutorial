@@ -139,7 +139,7 @@ class ClassificationProcessor(object):
 
     def get_train_examples(self):
         """Gets a collection of `InputExample`s for the train set."""
-        data_path = os.path.join(self.data_dir, "train.txt")
+        data_path = os.path.join(self.data_dir, "train.tsv")
         with open(data_path, 'r', encoding='utf-8') as f:
             reader = f.readlines()
         random.seed(0)
@@ -158,7 +158,7 @@ class ClassificationProcessor(object):
 
     def get_test_examples(self):
         """Gets a collection of `InputExample`s for the test set."""
-        data_path = os.path.join(self.data_dir, "test.txt")
+        data_path = os.path.join(self.data_dir, "test.tsv")
         with open(data_path, 'r', encoding='utf-8') as f:
             reader = f.readlines()
         random.seed(0)
@@ -177,7 +177,7 @@ class ClassificationProcessor(object):
 
     def get_dev_examples(self):
         """Gets a collection of `InputExample`s for the dev set."""
-        data_path = os.path.join(self.data_dir, "dev.txt")
+        data_path = os.path.join(self.data_dir, "dev.tsv")
         with open(data_path, 'r', encoding='utf-8') as f:
             reader = f.readlines()
         random.seed(0)
