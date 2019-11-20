@@ -20,12 +20,12 @@ class Config(object):
 	def __init__(self):
 		super(Config, self).__init__()
 		# xlnet
-		self.pretrain_xlnet_model_dir = "/Data/public/XLNet/chinese_xlnet_mid_L-24_H-768_A-12/"
-		self.spiece_model_file = "/Data/public/XLNet/chinese_xlnet_mid_L-24_H-768_A-12/spiece.model"
-		self.model_config_path = "/Data/public/XLNet/chinese_xlnet_mid_L-24_H-768_A-12/xlnet_config.json"
-		self.init_checkpoint = "/Data/public/XLNet/chinese_xlnet_mid_L-24_H-768_A-12/xlnet_model.ckpt"
+		self.pretrain_xlnet_model_dir = "/home/souche/modules/chinese_xlnet_base_L-12_H-768_A-12/"
+		self.spiece_model_file = "/home/souche/modules/chinese_xlnet_base_L-12_H-768_A-12/spiece.model"
+		self.model_config_path = "/home/souche/modules/chinese_xlnet_base_L-12_H-768_A-12/xlnet_config.json"
+		self.init_checkpoint = "/home/souche/modules/chinese_xlnet_base_L-12_H-768_A-12/xlnet_model.ckpt"
 
-		self.data_dir = '/home/xsq/nlp_code/xlnet-tutorial/data/sentiment/'
+		self.data_dir = '/home/souche/Codes/xlnet-tutorial/data/sentiment/'
 		self.do_train = True
 		self.do_eval = True
 		self.do_predict = True

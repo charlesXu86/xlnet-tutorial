@@ -3,7 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import sys
-sys.path.append('xlnet') # walkaround due to submodule absolute import...
+# sys.path.append('xlnet') # walkaround due to submodule absolute import...
 
 import collections
 import os
@@ -14,11 +14,14 @@ import tensorflow as tf
 import numpy as np
 import sentencepiece as sp
 
+parentdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parentdir)
+
 from xlnet import xlnet
 from xlnet import prepro_utils
 from xlnet import model_utils
 
-from demo.Config import Config
+from Config import Config
 
 cf = Config()
 
