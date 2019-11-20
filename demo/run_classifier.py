@@ -134,24 +134,24 @@ class ClassificationProcessor(object):
                  task_name):
         self.data_dir = data_dir
         self.task_name = task_name
-    
+
     def get_train_examples(self):
         """Gets a collection of `InputExample`s for the train set."""
-        data_path = os.path.join(self.data_dir, "train-{0}".format(self.task_name), "train-{0}.json".format(self.task_name))
+        data_path = os.path.join(self.data_dir, "train.tsv")
         data_list = self._read_json(data_path)
         example_list = self._get_example(data_list)
         return example_list
     
     def get_dev_examples(self):
         """Gets a collection of `InputExample`s for the dev set."""
-        data_path = os.path.join(self.data_dir, "dev-{0}".format(self.task_name), "dev-{0}.json".format(self.task_name))
+        data_path = os.path.join(self.data_dir, "dev.txt")
         data_list = self._read_json(data_path)
         example_list = self._get_example(data_list)
         return example_list
     
     def get_test_examples(self):
         """Gets a collection of `InputExample`s for the test set."""
-        data_path = os.path.join(self.data_dir, "test-{0}".format(self.task_name), "test-{0}.json".format(self.task_name))
+        data_path = os.path.join(self.data_dir, "test.txt")
         data_list = self._read_json(data_path)
         example_list = self._get_example(data_list)
         return example_list
@@ -162,8 +162,7 @@ class ClassificationProcessor(object):
         sent_labels = self._read_text(data_path)
         return sent_labels
     
-    def _read_text(self,
-                   data_path):
+    def _read_text(self, data_path):
         if os.path.exists(data_path):
             with open(data_path, "rb") as file:
                 data_list = []
@@ -174,8 +173,7 @@ class ClassificationProcessor(object):
         else:
             raise FileNotFoundError("data path not found: {0}".format(data_path))
     
-    def _read_json(self,
-                   data_path):
+    def _read_json(self, data_path):
         if os.path.exists(data_path):
             with open(data_path, "r") as file:
                 data_list = json.load(file)
@@ -183,8 +181,7 @@ class ClassificationProcessor(object):
         else:
             raise FileNotFoundError("data path not found: {0}".format(data_path))
     
-    def _get_example(self,
-                     data_list):
+    def _get_example(self, data_list):
         example_list = []
         for data in data_list:
             guid = data["id"]
