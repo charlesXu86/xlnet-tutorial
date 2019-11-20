@@ -25,10 +25,12 @@ from sklearn.metrics import classification_report, accuracy_score
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 import numpy as np
 import codecs
+import pickle as pkl
 import tensorflow as tf
 
 basedir = str(pathlib.Path(os.path.abspath(__file__)).parent.parent)
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
 class f1_callback(keras.callbacks.Callback):
 
@@ -51,6 +53,7 @@ class Domain_cls_with_Xlnet(object):
     def __init__(self):
         super(Domain_cls_with_Xlnet, self).__init__()
         self.max_seq_length = 30
+        self.labels = []
         self.num_class = 6
         self.batch_size = 16
         self.epoches = 5
@@ -66,9 +69,10 @@ class Domain_cls_with_Xlnet(object):
         self.attention_type = 'bi'  # ['bi', 'uni']
         self.memory_len = 0
         self.merge_type = 'add'   # 选择多层输出时处理多层输出的方式： ["add", "avg", "max", "concat"]
-        # self.sess = tf.Session(graph=tf.Graph())
+        self.sess = tf.Session(graph=tf.Graph())
         # with self.sess.graph.as_default():
         #     self.model = load_model(os.path.join(self.saved_models_dir, 'xlnet_domain_model.h5'))
+        #     self.model = load_model(os.path.join(basedir + '/demo/model/embedding_trainable.h5'))
 
     # 自行修改需要的配置
     def get_config(self):
@@ -78,7 +82,7 @@ class Domain_cls_with_Xlnet(object):
             'len_max': 30,  # 句子最大长度, 固定推荐20-50, bert越长会越慢, 占用空间也会变大, 小心OOM
             'label': 10,  # 类别数
             'batch_size': 16,
-            'epochs': 1,  # 训练最大轮次
+            'epochs': 5,  # 训练最大轮次
             'patience': 3,  # 早停,2-3就好
             'lr': 5e-5,  # 学习率
             'model_path': '/home/xsq/nlp_code/xlnet-tutorial/demo/model/model.h5',  # 模型保存地址
@@ -104,9 +108,72 @@ class Domain_cls_with_Xlnet(object):
 
     # def load_dict(self):
 
+    def get_labels(self, labels):
+        return sorted(set(labels), key=labels.index)  # 使用有序列表而不是集合。保证了标签正确
+
+    def get_label_list(self):
+        '''
+        读取模型训练是动态产生的label_list.pkl文件
+        :return:
+        '''
+        label_list = pkl.load(open(basedir + '/demo/label_list.pkl', 'rb'))
+        label_id = pkl.load(open(basedir + '/demo/label2id.pkl', 'rb'))
+        print(label_list, label_id)
+        return label_list, label_id
+
+
+    def process_datas(self, filename, mode='train'):
+        '''
+        数据预处理
+        1、训练数据格式为：  体育\t文本
+        :param filename:
+        :param mode:
+        :return:
+        '''
+        def process_train():
+            with open(filename, 'r', encoding='utf-8') as fin:
+                row_data = fin.readlines()
+                np.random.shuffle(row_data)
+                X, y = [], []
+                label_map = {}
+                for i in range(len(row_data)):
+                    line = row_data[i].strip().split('\t')
+                    if len(line) < 2:
+                        continue
+                    X.append(line[1])
+                    y.append(line[0])
+
+                # {v: k for k, v in m.items()}
+                label_list = self.get_labels(y)
+                label2id = dict((label, index) for index, label in enumerate(label_list))
+                y = self.char2id(label2id, y)
+                for (i, label) in enumerate(label_list):
+                    label_map[label] = i
+                with open('label_list.pkl', 'wb') as f:
+                    pkl.dump(y, f)
+                with open('label2id.pkl', 'wb') as f:
+                    pkl.dump(label2id, f)
+                X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.1, random_state=42)
+                length = model_hyper["batch_size"]
+                print(np.shape(X_train))
+                print(np.shape(X_val))
+                train_length = (len(y_train) // length) * length
+                val_length = (len(y_val) // length) * length
+                print(train_length, val_length)
+                return X_train[:train_length], X_val[:val_length], y_train[:train_length], y_val[:val_length]
+
+        if mode == "train":
+            return process_train()
+        # else:
+        #     return process_test()
+
+    def char2id(self, label, sting):
+        return [label.get(c, 1) for c in sting]
+
     def process_data(self, filename, mode="train"):
         '''
         数据预处理
+        1、训练数据格式为：  体育\t文本
         :param filename:
         :param mode:
         :return:
@@ -177,6 +244,37 @@ class Domain_cls_with_Xlnet(object):
             x_all = [x_1, x_2, x_3]
 
         if y != None:
+            # _, y = self.get_label_list()
+            onehot_label = []
+            for sample in y:
+                onehot = [0] * model_hyper["label"]
+                onehot[sample] = 1
+                onehot_label.append(onehot)
+
+            onehot_label = np.array(onehot_label)
+            return x_all, onehot_label
+        return x_all
+
+    def encode_data_2(self, X, y=None):
+        x = []
+
+        for sample in X:
+            if type(sample) == tuple and len(sample) == 2:
+                encoded = sentence2idx(xlnet_hyper["len_max"], sample[0], sample[1])
+            else:
+                encoded = sentence2idx(xlnet_hyper["len_max"], sample)
+            x.append(encoded)
+
+        x_1 = np.array([i[0][0] for i in x])
+        x_2 = np.array([i[1][0] for i in x])
+        x_3 = np.array([i[2][0] for i in x])
+        if xlnet_hyper["trainable"] == True:
+            x_all = [x_1, x_2, x_3, np.zeros(np.shape(x_1))]
+        else:
+            x_all = [x_1, x_2, x_3]
+
+        if y != None:
+            # _, y = self.get_label_list()
             onehot_label = []
             for sample in y:
                 onehot = [0] * model_hyper["label"]
@@ -208,9 +306,9 @@ class Domain_cls_with_Xlnet(object):
 
 
     def train(self, filename):
-        X_train, X_val, y_train, y_val = self.process_data(filename, mode="train")
+        X_train, X_val, y_train, y_val = self.process_datas(filename, mode="train")
         model = self.create_model()
-        encoded_x_train, encoded_y_train = self.encode_data(X_train, y_train)
+        encoded_x_train, encoded_y_train = self.encode_data_2(X_train, y_train)
         encoded_x_val, encoded_y_val = self.encode_data(X_val, y_val)
 
         model.compile(
@@ -235,7 +333,6 @@ class Domain_cls_with_Xlnet(object):
         if xlnet_hyper["trainable"]:
             embedding.model.save(xlnet_hyper["path_fineture"])
 
-
     def test(self, filename):
         global model_hyper
         X_test, y_test = self.process_data(filename, mode="test")
@@ -255,7 +352,6 @@ class Domain_cls_with_Xlnet(object):
         acc = accuracy_score(y_val, y_pred)
         print("acc = {}".format(acc))
 
-
     def predict(self, msg):
         global model_hyper
         # X_pre = self.process_data(filename, mode="predict")
@@ -267,16 +363,22 @@ class Domain_cls_with_Xlnet(object):
             raise RuntimeError("model path {} doesn't exist!".format(model_hyper["model_path"]))
         encoded_x_pre = self.encode_data(X_pre)
 
-        # batsh_size 可以改大一点，但是必须可以整除样本数量
+        # # batsh_size 可以改大一点，但是必须可以整除样本数量
         y_pred = model.predict(encoded_x_pre, batch_size=1)
-        y_pred = np.argmax(y_pred, axis=1)
-        print(y_pred)
+        label, label_id = self.get_label_list()
+        y_preds = np.argmax(y_pred, axis=1).tolist()[0]
+        print(y_preds, type(y_preds))
         return y_pred
 
 
 if __name__ == '__main__':
     domain = Domain_cls_with_Xlnet()
     domain.init()
-    domain.train(basedir + "/data/cls/train.txt")
-    domain.test(basedir + "/data/cls/test.txt")
-    # domain.predict(basedir + "/data/cls/predict.txt")
+
+    data1 = '/Data/xiaobensuan/cnews/'
+
+    data2 = '/home/xsq/nlp_code/xlnet-tutorial/data/cls/'
+    # domain.train(data1 + "train.txt")
+    # domain.test(data1 + "test.txt")
+    sentence = '科比退役了'
+    domain.predict(sentence)
