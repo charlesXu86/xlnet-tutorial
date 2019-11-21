@@ -28,62 +28,6 @@ cf = Config()
 
 MIN_FLOAT = -1e30
 
-
-
-# cf.DEFINE_string("data_dir", None, "Data directory where raw data located.")
-# cf.DEFINE_string("output_dir", None, "Output directory where processed data located.")
-# cf.DEFINE_string("model_dir", None, "Model directory where checkpoints located.")
-# cf.DEFINE_string("export_dir", None, "Export directory where saved model located.")
-#
-# cf.DEFINE_string("task_name", None, "The name of the task to train.")
-# cf.DEFINE_string("model_config_path", None, "Config file of the pre-trained model.")
-# cf.DEFINE_string("init_checkpoint", None, "Initial checkpoint of the pre-trained model.")
-# cf.DEFINE_integer("random_seed", 100, "Random seed for weight initialzation.")
-# cf.DEFINE_string("predict_tag", None, "Predict tag for predict result tracking.")
-#
-# cf.DEFINE_bool("do_train", False, "Whether to run training.")
-# cf.DEFINE_bool("do_eval", False, "Whether to run evaluation.")
-# cf.DEFINE_bool("do_predict", False, "Whether to run prediction.")
-# cf.DEFINE_bool("do_export", False, "Whether to run exporting.")
-#
-# cf.DEFINE_bool("lower_case", False, "Enable lower case nor not.")
-# cf.DEFINE_string("spiece_model_file", None, "Sentence Piece model path.")
-# cf.DEFINE_integer("max_seq_length", 128, "Max sequence length")
-# cf.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
-# cf.DEFINE_integer("eval_batch_size", 8, "Total batch size for eval.")
-# cf.DEFINE_integer("predict_batch_size", 8, "Total batch size for predict.")
-#
-# cf.DEFINE_float("dropout", 0.1, "Dropout rate.")
-# cf.DEFINE_float("dropatt", 0.1, "Attention dropout rate.")
-# cf.DEFINE_enum("init", default="normal", enum_values=["normal", "uniform"], help="Initialization method.")
-# cf.DEFINE_float("init_std", 0.02, "Initialization std when init is normal.")
-# cf.DEFINE_float("init_range", 0.1, "Initialization std when init is uniform.")
-# cf.DEFINE_integer("clamp_len", -1, "Clamp length")
-# cf.DEFINE_bool("use_bfloat16", False, "Whether to use bfloat16.")
-#
-# cf.DEFINE_integer("train_steps", 1000, "Number of training steps")
-# cf.DEFINE_integer("warmup_steps", 0, "number of warmup steps")
-# cf.DEFINE_float("learning_rate", 1e-5, "initial learning rate")
-# cf.DEFINE_float("min_lr_ratio", 0.0, "min lr ratio for cos decay.")
-# cf.DEFINE_float("lr_layer_decay_rate", 1.0, "Top layer: lr[L] = cf.learning_rate. Low layer: lr[l-1] = lr[l] * lr_layer_decay_rate.")
-# cf.DEFINE_float("clip", 1.0, "Gradient clipping")
-# cf.DEFINE_float("weight_decay", 0.0, "Weight decay rate")
-# cf.DEFINE_float("adam_epsilon", 1e-8, "Adam epsilon")
-# cf.DEFINE_string("decay_method", "poly", "poly or cos")
-# cf.DEFINE_integer("max_save", 5, "Max number of checkpoints to save. Use 0 to save all.")
-# cf.DEFINE_integer("save_steps", 1000, "Save the model for every save_steps. If None, not to save any model.")
-#
-# cf.DEFINE_bool("use_tpu", False, "Whether to use TPU or GPU/CPU.")
-# cf.DEFINE_integer("num_hosts", 1, "How many TPU hosts.")
-# cf.DEFINE_integer("num_core_per_host", 1, "Total number of TPU cores to use.")
-# cf.DEFINE_string("tpu_job_name", None, "TPU worker job name.")
-# cf.DEFINE_string("tpu", None, "The Cloud TPU name to use for training.")
-# cf.DEFINE_string("tpu_zone", None, "GCE zone where the Cloud TPU is located in.")
-# cf.DEFINE_string("gcp_project", None, "Project name for the Cloud TPU-enabled project.")
-# cf.DEFINE_string("master", None, "TensorFlow master URL")
-# cf.DEFINE_integer("iterations", 1000, "number of iterations per TPU training loop.")
-
-
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
     def __init__(self,
@@ -198,7 +142,7 @@ class ClassificationProcessor(object):
     def get_sent_labels(self):
         """Gets the list of sentence labels for this data set."""
 
-        return [0, 1]
+        return ['0', '1']
 
 
 class XLNetTokenizer(object):
@@ -270,9 +214,7 @@ class XLNetExampleConverter(object):
         self.max_seq_length = max_seq_length
         self.tokenizer = tokenizer
     
-    def convert_single_example(self,
-                               example,
-                               logging=False):
+    def convert_single_example(self, example, logging=False):
         """Converts a single `InputExample` into a single `InputFeatures`."""
         default_feature = InputFeatures(
             input_ids=[0] * self.max_seq_length,
@@ -675,7 +617,7 @@ class XLNetPredictRecorder(object):
             os.mkdir(data_folder)
 
         with open(data_path, "w") as file:  
-            json.dump(data_list, file, indent=4)
+            json.dump(data_list, file, indent=4, ensure_ascii=False)
     
     def _write_to_text(self,
                        data_list,
