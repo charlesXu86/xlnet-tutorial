@@ -1,0 +1,795 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import sys
+# sys.path.append('xlnet') # walkaround due to submodule absolute import...
+
+import collections
+import os
+import time
+import json
+import random
+
+import tensorflow as tf
+import numpy as np
+import sentencepiece as sp
+
+parentdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parentdir)
+
+from xlnet import xlnet
+from xlnet import prepro_utils
+from xlnet import model_utils
+
+from queue import Queue
+from threading import Thread
+
+from Config import Config
+
+cf = Config()
+
+MIN_FLOAT = -1e30
+
+class InputExample(object):
+    """A single training/test example for simple sequence classification."""
+    def __init__(self,
+                 guid,
+                 text,
+                 sent_label=None):
+        """Constructs a InputExample.
+
+        Args:
+          guid: Unique id for the example.
+          text: string. The untokenized text of the first sequence. For single
+            sequence tasks, only this sequence must be specified.
+            Only must be specified for sequence pair tasks.
+          sent_label: (Optional) string. The sentence label of the example. This should be
+            specified for train and dev examples, but not for test examples.
+        """
+        self.guid = guid
+        self.text = text
+        self.sent_label = sent_label
+
+class PaddingInputExample(object):
+    """Fake example so the num input examples is a multiple of the batch size.
+    
+    When running eval/predict on the TPU, we need to pad the number of examples
+    to be a multiple of the batch size, because the TPU requires a fixed batch
+    size. The alternative is to drop the last batch, which is bad because it means
+    the entire output data won't be generated.
+    
+    We use this class instead of `None` because treating `None` as padding
+    battches could cause silent errors.
+    """
+
+class InputFeatures(object):
+    """A single set of features of data."""
+    def __init__(self,
+                 input_ids,
+                 input_masks,
+                 segment_ids,
+                 sent_label_id):
+        self.input_ids = input_ids
+        self.input_masks = input_masks
+        self.segment_ids = segment_ids
+        self.sent_label_id = sent_label_id
+
+class ClassificationProcessor(object):
+    """Processor for the classification data set."""
+    # def __init__(self,
+    #              data_dir,
+    #              task_name):
+    #     self.data_dir = data_dir
+    #     self.task_name = task_name
+    #     self.label = []
+
+    def get_train_examples(self):
+        """Gets a collection of `InputExample`s for the train set."""
+        data_path = os.path.join(cf.data_dir, "train.tsv")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
+        return example_list
+
+    def get_test_examples(self):
+        """Gets a collection of `InputExample`s for the test set."""
+        data_path = os.path.join(cf.data_dir, "test.tsv")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
+        return example_list
+
+    def get_dev_examples(self):
+        """Gets a collection of `InputExample`s for the dev set."""
+        data_path = os.path.join(cf.data_dir, "dev.tsv")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = f.readlines()
+        random.seed(0)
+        random.shuffle(reader)
+
+        example_list = []
+        for index, line in enumerate(reader):
+            guid = 'train-%d' % index
+            split_line = line.strip().split('\t')
+            text = split_line[1]
+            label = line[0]
+
+            example = InputExample(guid=guid, text=text, sent_label=label)
+            example_list.append(example)
+        return example_list
+
+    
+    def get_sent_labels(self):
+        """Gets the list of sentence labels for this data set."""
+
+        return ['0', '1']
+
+class XLNetTokenizer(object):
+    """Default text tokenizer for XLNet"""
+    def __init__(self,
+                 sp_model_file,
+                 lower_case=False):
+        """Construct XLNet tokenizer"""
+        self.sp_processor = sp.SentencePieceProcessor()
+        self.sp_processor.Load(sp_model_file)
+        self.lower_case = lower_case
+    
+    def tokenize(self,
+                 text):
+        """Tokenize text for XLNet"""
+        processed_text = prepro_utils.preprocess_text(text, lower=self.lower_case)
+        tokenized_pieces = prepro_utils.encode_pieces(self.sp_processor, processed_text)
+        return tokenized_pieces
+    
+    def encode(self,
+               text):
+        """Encode text for XLNet"""
+        processed_text = prepro_utils.preprocess_text(text, lower=self.lower_case)
+        encoded_ids = prepro_utils.encode_ids(self.sp_processor, processed_text)
+        return encoded_ids
+    
+    def token_to_id(self,
+                    token):
+        """Convert token to id for XLNet"""
+        return self.sp_processor.PieceToId(token)
+    
+    def id_to_token(self,
+                    id):
+        """Convert id to token for XLNet"""
+        return self.sp_processor.IdToPiece(id)
+    
+    def tokens_to_ids(self,
+                      tokens):
+        """Convert tokens to ids for XLNet"""
+        return [self.sp_processor.PieceToId(token) for token in tokens]
+    
+    def ids_to_tokens(self,
+                      ids):
+        """Convert ids to tokens for XLNet"""
+        return [self.sp_processor.IdToPiece(id) for id in ids]
+
+class XLNetExampleConverter(object):
+    """Default example converter for XLNet"""
+    def __init__(self,
+                 sent_label_list,
+                 max_seq_length,
+                 tokenizer):
+        """Construct XLNet example converter"""
+        self.special_vocab_list = ["<unk>", "<s>", "</s>", "<cls>", "<sep>", "<pad>", "<mask>", "<eod>", "<eop>"]
+        self.special_vocab_map = {}
+        for (i, special_vocab) in enumerate(self.special_vocab_list):
+            self.special_vocab_map[special_vocab] = i
+        
+        self.segment_vocab_list = ["<a>", "<b>", "<cls>", "<sep>", "<pad>"]
+        self.segment_vocab_map = {}
+        for (i, segment_vocab) in enumerate(self.segment_vocab_list):
+            self.segment_vocab_map[segment_vocab] = i
+        
+        self.sent_label_list = sent_label_list
+        self.sent_label_map = {}
+        for (i, sent_label) in enumerate(self.sent_label_list):
+            self.sent_label_map[sent_label] = i
+        
+        self.max_seq_length = max_seq_length
+        self.tokenizer = tokenizer
+    
+    def convert_single_example(self, example, logging=False):
+        """Converts a single `InputExample` into a single `InputFeatures`."""
+        default_feature = InputFeatures(
+            input_ids=[0] * self.max_seq_length,
+            input_masks=[1] * self.max_seq_length,
+            segment_ids=[0] * self.max_seq_length,
+            sent_label_id=0)
+        
+        if isinstance(example, PaddingInputExample):
+            return default_feature
+        
+        tokens = self.tokenizer.tokenize(example.text)
+        
+        if len(tokens) > self.max_seq_length - 2:
+            tokens = tokens[0:(self.max_seq_length - 2)]
+        
+        printable_tokens = [prepro_utils.printable_text(token) for token in tokens]
+        
+        # The convention in XLNet is:
+        # (a) For sequence pairs:
+        #  tokens:      is it a dog ? [SEP] no , it is not . [SEP] [CLS] 
+        #  segment_ids: 0  0  0 0   0 0     1  1 1  1  1   1 1     2
+        # (b) For single sequences:
+        #  tokens:      this dog is big . [SEP] [CLS] 
+        #  segment_ids: 0    0   0  0   0 0     2
+        #
+        # Where "type_ids" are used to indicate whether this is the first
+        # sequence or the second sequence. The embedding vectors for `type=0` and
+        # `type=1` were learned during pre-training and are added to the wordpiece
+        # embedding vector (and position vector). This is not *strictly* necessary
+        # since the [SEP] token unambiguously separates the sequences, but it makes
+        # it easier for the model to learn the concept of sequences.
+        #
+        # For classification tasks, the last vector (corresponding to [CLS]) is
+        # used as the "sentence vector". Note that this only makes sense when
+        # the entire model is fine-tuned.
+        
+        input_tokens = []
+        segment_ids = []
+        sent_label_id = self.sent_label_map[example.sent_label]
+        
+        for i, token in enumerate(tokens):
+            input_tokens.append(token)
+            segment_ids.append(self.segment_vocab_map["<a>"])
+
+        input_tokens.append("<sep>")
+        segment_ids.append(self.segment_vocab_map["<a>"])
+        
+        input_tokens.append("<cls>")
+        segment_ids.append(self.segment_vocab_map["<cls>"])
+        
+        input_ids = self.tokenizer.tokens_to_ids(input_tokens)
+        
+        # The mask has 0 for real tokens and 1 for padding tokens. Only real tokens are attended to.
+        input_masks = [0] * len(input_ids)
+        
+        # Zero-pad up to the sequence length.
+        if len(input_ids) < self.max_seq_length:
+            pad_seq_length = self.max_seq_length - len(input_ids)
+            input_ids = [self.special_vocab_map["<pad>"]] * pad_seq_length + input_ids
+            input_masks = [1] * pad_seq_length + input_masks
+            segment_ids = [self.segment_vocab_map["<pad>"]] * pad_seq_length + segment_ids
+        
+        assert len(input_ids) == self.max_seq_length
+        assert len(input_masks) == self.max_seq_length
+        assert len(segment_ids) == self.max_seq_length
+        
+        if logging:
+            tf.logging.info("*** Example ***")
+            tf.logging.info("guid: %s" % (example.guid))
+            tf.logging.info("tokens: %s" % " ".join(printable_tokens))
+            tf.logging.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+            tf.logging.info("input_masks: %s" % " ".join([str(x) for x in input_masks]))
+            tf.logging.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            tf.logging.info("sent_label_id: %s" % str(sent_label_id))
+
+        feature = InputFeatures(
+            input_ids=input_ids,
+            input_masks=input_masks,
+            segment_ids=segment_ids,
+            sent_label_id=sent_label_id)
+        
+        return feature
+    
+    def convert_examples_to_features(self, examples):
+        """Convert a set of `InputExample`s to a list of `InputFeatures`."""
+        features = []
+        for (idx, example) in enumerate(examples):
+            if idx % 10000 == 0:
+                tf.logging.info("Writing example %d of %d" % (idx, len(examples)))
+
+            feature = self.convert_single_example(example, logging=(idx < 5))
+            features.append(feature)
+
+        return features
+    
+    def file_based_convert_examples_to_features(self,
+                                                examples,
+                                                output_file):
+        """Convert a set of `InputExample`s to a TFRecord file."""
+        def create_int_feature(values):
+            return tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
+        
+        def create_float_feature(values):
+            return tf.train.Feature(float_list=tf.train.FloatList(value=list(values)))
+        
+        with tf.python_io.TFRecordWriter(output_file) as writer:
+            for (idx, example) in enumerate(examples):
+                if idx % 10000 == 0:
+                    tf.logging.info("Writing example %d of %d" % (idx, len(examples)))
+
+                feature = self.convert_single_example(example, logging=(idx < 5))
+
+                features = collections.OrderedDict()
+                features["input_ids"] = create_int_feature(feature.input_ids)
+                features["input_masks"] = create_float_feature(feature.input_masks)
+                features["segment_ids"] = create_int_feature(feature.segment_ids)
+                features["sent_label_ids"] = create_int_feature([feature.sent_label_id])
+                
+                tf_example = tf.train.Example(features=tf.train.Features(feature=features))
+                writer.write(tf_example.SerializeToString())
+
+class XLNetInputBuilder(object):
+    """Default input builder for XLNet"""
+    @staticmethod
+    def get_input_builder(features,
+                          seq_length,
+                          is_training,
+                          drop_remainder):
+        """Creates an `input_fn` closure to be passed to TPUEstimator."""
+        all_input_ids = []
+        all_input_masks = []
+        all_segment_ids = []
+        all_sent_label_ids = []
+        
+        for feature in features:
+            all_input_ids.append(feature.input_ids)
+            all_input_masks.append(feature.input_masks)
+            all_segment_ids.append(feature.segment_ids)
+            all_sent_label_ids.append(feature.sent_label_id)
+        
+        def input_fn(params,
+                     input_context=None):
+            batch_size = params["batch_size"]
+            num_examples = len(features)
+            
+            # This is for demo purposes and does NOT scale to large data sets. We do
+            # not use Dataset.from_generator() because that uses tf.py_func which is
+            # not TPU compatible. The right way to load data is with TFRecordReader.
+            d = tf.data.Dataset.from_tensor_slices({
+                "input_ids": tf.constant(all_input_ids, shape=[num_examples, seq_length], dtype=tf.int32),
+                "input_masks": tf.constant(all_input_masks, shape=[num_examples, seq_length], dtype=tf.float32),
+                "segment_ids": tf.constant(all_segment_ids, shape=[num_examples, seq_length], dtype=tf.int32),
+                "sent_label_ids": tf.constant(all_sent_label_ids, shape=[num_examples], dtype=tf.int32),
+            })
+            
+            if input_context is not None:
+                tf.logging.info("Input pipeline id %d out of %d", input_context.input_pipeline_id, input_context.num_replicas_in_sync)
+                d = d.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
+            
+            if is_training:
+                d = d.repeat()
+                d = d.shuffle(buffer_size=100, seed=np.random.randint(10000))
+            
+            d = d.batch(batch_size=batch_size, drop_remainder=drop_remainder)
+            return d
+        
+        return input_fn
+    
+    @staticmethod
+    def get_file_based_input_fn(input_file,
+                                seq_length,
+                                is_training,
+                                drop_remainder):
+        """Creates an `input_fn` closure to be passed to TPUEstimator."""
+        name_to_features = {
+            "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
+            "input_masks": tf.FixedLenFeature([seq_length], tf.float32),
+            "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
+            "sent_label_ids": tf.FixedLenFeature([], tf.int64),
+        }
+        
+        def _decode_record(record,
+                           name_to_features):
+            """Decodes a record to a TensorFlow example."""
+            example = tf.parse_single_example(record, name_to_features)
+            
+            # tf.Example only supports tf.int64, but the TPU only supports tf.int32. So cast all int64 to int32.
+            for name in list(example.keys()):
+                t = example[name]
+                if t.dtype == tf.int64:
+                    t = tf.to_int32(t)
+                example[name] = t
+
+            return example
+        
+        def input_fn(params,
+                     input_context=None):
+            """The actual input function."""
+            batch_size = params["batch_size"]
+            
+            # For training, we want a lot of parallel reading and shuffling.
+            # For eval, we want no shuffling and parallel reading doesn't matter.
+            d = tf.data.TFRecordDataset(input_file)
+            
+            if input_context is not None:
+                tf.logging.info("Input pipeline id %d out of %d", input_context.input_pipeline_id, input_context.num_replicas_in_sync)
+                d = d.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
+            
+            if is_training:
+                d = d.repeat()
+                d = d.shuffle(buffer_size=100, seed=np.random.randint(10000))
+            
+            d = d.apply(tf.contrib.data.map_and_batch(
+                lambda record: _decode_record(record, name_to_features),
+                batch_size=batch_size,
+                drop_remainder=drop_remainder))
+            
+            return d
+        
+        return input_fn
+    
+    @staticmethod
+    def get_serving_input_fn(seq_length):
+        """Creates an `input_fn` closure to be passed to TPUEstimator."""
+        def serving_input_fn():
+            with tf.variable_scope("serving"):
+                features = {
+                    'input_ids': tf.placeholder(tf.int32, [None, seq_length], name='input_ids'),
+                    'input_masks': tf.placeholder(tf.float32, [None, seq_length], name='input_masks'),
+                    'segment_ids': tf.placeholder(tf.int32, [None, seq_length], name='segment_ids')
+                }
+
+                return tf.estimator.export.build_raw_serving_input_receiver_fn(features)()
+        
+        return serving_input_fn
+
+class XLNetModelBuilder(object):
+    """Default model builder for XLNet"""
+    def __init__(self,
+                 model_config,
+                 use_tpu=False):
+        """Construct XLNet model builder"""
+        self.model_config = model_config
+        self.use_tpu = use_tpu
+    
+    def _get_masked_data(self,
+                         data_ids,
+                         label_list):
+        label_map = {}
+        for (i, label) in enumerate(label_list):
+            label_map[label] = i
+        
+        pad_id = tf.constant(label_map["<pad>"], shape=[], dtype=tf.int32)
+        out_id = tf.constant(label_map["O"], shape=[], dtype=tf.int32)
+        x_id = tf.constant(label_map["X"], shape=[], dtype=tf.int32)
+        cls_id = tf.constant(label_map["<cls>"], shape=[], dtype=tf.int32)
+        sep_id = tf.constant(label_map["<sep>"], shape=[], dtype=tf.int32)
+
+        masked_data_ids = (tf.cast(tf.not_equal(data_ids, pad_id), dtype=tf.int32) *
+            tf.cast(tf.not_equal(data_ids, out_id), dtype=tf.int32) *
+            tf.cast(tf.not_equal(data_ids, x_id), dtype=tf.int32) *
+            tf.cast(tf.not_equal(data_ids, cls_id), dtype=tf.int32) *
+            tf.cast(tf.not_equal(data_ids, sep_id), dtype=tf.int32))
+
+        return masked_data_ids
+    
+    def _create_model(self,
+                      input_ids,
+                      input_masks,
+                      segment_ids,
+                      sent_label_ids,
+                      sent_label_list,
+                      mode):
+        """Creates XLNet-Classifier model"""
+        model = xlnet.XLNetModel(
+            xlnet_config=self.model_config,
+            run_config=xlnet.create_run_config(mode == tf.estimator.ModeKeys.TRAIN, True, cf),
+            input_ids=tf.transpose(input_ids, perm=[1,0]),
+            input_mask=tf.transpose(input_masks, perm=[1,0]),
+            seg_ids=tf.transpose(segment_ids, perm=[1,0]))
+        
+        initializer = model.get_initializer()
+        
+        with tf.variable_scope("sent", reuse=tf.AUTO_REUSE):
+            sent_result = model.get_pooled_out("last")
+            sent_result_mask = tf.cast(tf.reduce_max(1 - input_masks, axis=-1, keepdims=True), dtype=tf.float32)
+            
+            sent_dense_layer = tf.keras.layers.Dense(units=len(sent_label_list), activation=None, use_bias=True,
+                kernel_initializer=initializer, bias_initializer=tf.zeros_initializer,
+                kernel_regularizer=None, bias_regularizer=None, trainable=True)
+            
+            sent_dropout_layer = tf.keras.layers.Dropout(rate=0.1, seed=np.random.randint(10000))
+            
+            sent_result = sent_dense_layer(sent_result)
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                sent_result = sent_dropout_layer(sent_result)
+            
+            masked_sent_predict = sent_result * sent_result_mask + MIN_FLOAT * (1 - sent_result_mask)
+            sent_predict_probs = tf.nn.softmax(masked_sent_predict, axis=-1)
+            sent_predict_ids = tf.cast(tf.argmax(sent_predict_probs, axis=-1), dtype=tf.int32)
+            sent_predict_scores = tf.reduce_max(sent_predict_probs, axis=-1)
+        
+        loss = tf.constant(0.0, dtype=tf.float32)
+        if mode not in [tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL]:
+            return loss, sent_predict_ids, sent_predict_scores, sent_predict_probs
+        
+        if sent_label_ids is not None:
+            with tf.variable_scope("sent_loss", reuse=tf.AUTO_REUSE):
+                sent_label = tf.cast(sent_label_ids, dtype=tf.float32)
+                sent_label_mask = tf.cast(tf.reduce_max(1 - input_masks, axis=-1), dtype=tf.float32)
+                masked_sent_label = tf.cast(sent_label * sent_label_mask, dtype=tf.int32)
+                cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=masked_sent_label, logits=masked_sent_predict)
+                sent_loss = tf.reduce_sum(cross_entropy * sent_label_mask) / tf.reduce_sum(tf.reduce_max(sent_label_mask, axis=-1))
+                loss = loss + sent_loss
+        
+        return loss, sent_predict_ids, sent_predict_scores, sent_predict_probs
+    
+    def get_model_fn(self,
+                     sent_label_list):
+        """Returns `model_fn` closure for TPUEstimator."""
+        def model_fn(features,
+                     labels,
+                     mode,
+                     params):  # pylint: disable=unused-argument
+            """The `model_fn` for TPUEstimator."""
+            def metric_fn(sent_label_ids,
+                          sent_predict_ids):
+                sent_accuracy = tf.metrics.accuracy(labels=sent_label_ids, predictions=sent_predict_ids)
+
+                metric = {
+                    "sent_accuracy": sent_accuracy,
+                }
+
+                return metric
+            
+            tf.logging.info("*** Features ***")
+            for name in sorted(features.keys()):
+                tf.logging.info("  name = %s, shape = %s" % (name, features[name].shape))
+
+            input_ids = features["input_ids"]
+            input_masks = features["input_masks"]
+            segment_ids = features["segment_ids"]
+            sent_label_ids = features["sent_label_ids"] if mode in [tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL] else None
+            
+            loss, sent_predict_ids, sent_predict_scores, sent_predict_probs = self._create_model(input_ids, input_masks, segment_ids, sent_label_ids, sent_label_list, mode)
+            
+            scaffold_fn = model_utils.init_from_checkpoint(cf)
+            
+            output_spec = None
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                train_op, _, _ = model_utils.get_train_op(cf, loss)
+                output_spec = tf.contrib.tpu.TPUEstimatorSpec(
+                    mode=mode,
+                    loss=loss,
+                    train_op=train_op,
+                    scaffold_fn=scaffold_fn)
+            elif mode == tf.estimator.ModeKeys.EVAL:
+                eval_metrics = (metric_fn, [sent_label_ids, sent_predict_ids])
+                output_spec = tf.contrib.tpu.TPUEstimatorSpec(
+                    mode=mode,
+                    loss=loss,
+                    eval_metrics=eval_metrics,
+                    scaffold_fn=scaffold_fn)
+            else:
+                output_spec = tf.contrib.tpu.TPUEstimatorSpec(
+                    mode=mode,
+                    predictions={
+                        "sent_predict_id": sent_predict_ids,
+                        "sent_predict_score": sent_predict_scores,
+                        "sent_predict_prob": sent_predict_probs
+                    },
+                    scaffold_fn=scaffold_fn)
+            
+            return output_spec
+        
+        return model_fn
+
+class XLNetPredictRecorder(object):
+    """Default predict recorder for XLNet"""
+    def __init__(self,
+                 output_dir,
+                 sent_label_list,
+                 max_seq_length,
+                 tokenizer,
+                 predict_tag=None):
+        """Construct XLNet predict recorder"""
+        self.output_path = os.path.join(output_dir, "predict.{0}.json".format(predict_tag if predict_tag else str(time.time())))
+        
+        self.sent_label_list = sent_label_list
+        
+        self.max_seq_length = max_seq_length
+        self.tokenizer = tokenizer
+    
+    def _write_to_json(self,
+                       data_list,
+                       data_path):
+        data_folder = os.path.dirname(data_path)
+        if not os.path.exists(data_folder):
+            os.mkdir(data_folder)
+
+        with open(data_path, "w") as file:  
+            json.dump(data_list, file, indent=4)
+
+        with open(data_path, "w") as file:
+            for data in data_list:
+                file.write("{0}\n".format(data))
+    
+    def record(self, predicts):
+        decoded_results = []
+        for predict in predicts:
+            input_tokens = self.tokenizer.ids_to_tokens(predict["input_ids"])
+            input_masks = predict["input_masks"]
+            
+            input_text = "".join(input_tokens).replace(prepro_utils.SPIECE_UNDERLINE, " ")
+            
+            decoded_result = {
+                "text": prepro_utils.printable_text(input_text),
+                "sent_label": self.sent_label_list[predict["sent_label_id"]],
+                "sent_predict": self.sent_label_list[predict["sent_predict_id"]],
+                "sent_score": float(predict["sent_predict_score"]),
+                "sent_probs": [float(prob) for prob in predict["sent_predict_prob"]]
+            }
+            
+            decoded_results.append(decoded_result)
+        
+        self._write_to_json(decoded_results, self.output_path)
+
+class XLNetClsModel(object):
+
+    def __init__(self):
+        self.mode = None
+        self.batch_size = cf.batch_size
+        self.estimator = None
+        self.processor = ClassificationProcessor()
+        self.data_dir = cf.data_dir
+        tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
+
+    def set_mode(self, mode):
+        self.mode = mode
+        self.estimator = self.get_estimator()
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            self.input_queue = Queue(maxsize=1)
+            self.output_queue = Queue(maxsize=1)
+            # self.predict_thread = Thread(target=self.predict_from_queue, daemon=True)  # daemon守护进程
+            # self.predict_thread.start()
+
+    def get_estimator(self):
+        '''
+
+        :return:
+        '''
+        from tensorflow.python.estimator.estimator import Estimator
+        from tensorflow.python.estimator.run_config import RunConfig
+
+        xlnet_config = xlnet.XLNetConfig(json_path=cf.model_config_path)
+
+        sent_label_list = self.processor.get_sent_labels()
+
+        if self.mode == tf.estimator.ModeKeys.TRAIN:
+            init_checkpoint = cf.init_checkpoint
+        else:
+            init_checkpoint = cf.output_dir
+
+        model_builder = XLNetModelBuilder(
+                                        model_config=xlnet_config,
+                                        use_tpu=cf.use_tpu)
+
+        model_fn = model_builder.get_model_fn(sent_label_list)
+
+        tpu_config = model_utils.configure_tpu(cf)
+
+        estimator = tf.contrib.tpu.TPUEstimator(
+                                use_tpu=cf.use_tpu,
+                                model_fn=model_fn,
+                                config=tpu_config,
+                                export_to_tpu=cf.use_tpu,
+                                train_batch_size=cf.batch_size,
+                                eval_batch_size=cf.batch_size,
+                                predict_batch_size=cf.batch_size)
+
+        return estimator
+
+    def train(self):
+        if self.mode is None:
+            raise ValueError("Please set the 'mode' parameter")
+
+        train_examples = self.processor.get_train_examples()
+
+        estimator = self.get_estimator()
+        tokenizer = XLNetTokenizer(
+            sp_model_file=cf.spiece_model_file,
+            lower_case=cf.lower_case)
+
+        example_converter = XLNetExampleConverter(
+            sent_label_list=self.processor.get_sent_labels(),
+            max_seq_length=cf.max_seq_length,
+            tokenizer=tokenizer)
+        train_features = example_converter.convert_examples_to_features(train_examples)
+        train_input_fn = XLNetInputBuilder.get_input_builder(train_features, cf.max_seq_length, True, True)
+
+        estimator.train(input_fn=train_input_fn, max_steps=cf.train_steps)
+
+    def eval(self):
+        if self.mode is None:
+            raise ValueError("Please set the 'mode' parameter")
+        eval_examples = self.processor.get_dev_examples()
+
+        tf.logging.info("***** Run evaluation *****")
+        tf.logging.info("  Num examples = %d", len(eval_examples))
+        tf.logging.info("  Batch size = %d", cf.batch_size)
+
+        estimator = self.get_estimator()
+        tokenizer = XLNetTokenizer(
+            sp_model_file=cf.spiece_model_file,
+            lower_case=cf.lower_case)
+
+        example_converter = XLNetExampleConverter(
+            sent_label_list=self.processor.get_sent_labels(),
+            max_seq_length=cf.max_seq_length,
+            tokenizer=tokenizer)
+
+        eval_features = example_converter.convert_examples_to_features(eval_examples)
+        eval_input_fn = XLNetInputBuilder.get_input_builder(eval_features, cf.max_seq_length, False, False)
+
+        result = estimator.evaluate(input_fn=eval_input_fn)
+
+        sent_accuracy = result["sent_accuracy"]
+
+        tf.logging.info("***** Evaluation result *****")
+        tf.logging.info("  Accuracy (sent-level) = %s", str(sent_accuracy))
+
+    def predict(self):
+
+        predict_examples = self.processor.get_test_examples()
+
+        tf.logging.info("***** Run prediction *****")
+        tf.logging.info("  Num examples = %d", len(predict_examples))
+        tf.logging.info("  Batch size = %d", cf.batch_size)
+
+        estimator = self.get_estimator()
+
+        tokenizer = XLNetTokenizer(
+            sp_model_file=cf.spiece_model_file,
+            lower_case=cf.lower_case)
+
+        example_converter = XLNetExampleConverter(
+            sent_label_list=self.processor.get_sent_labels(),
+            max_seq_length=cf.max_seq_length,
+            tokenizer=tokenizer)
+        predict_features = example_converter.convert_examples_to_features(predict_examples)
+        predict_input_fn = XLNetInputBuilder.get_input_builder(predict_features, cf.max_seq_length, False, False)
+
+        result = estimator.predict(input_fn=predict_input_fn)  # 预测模型
+
+        predict_recorder = XLNetPredictRecorder(
+            output_dir=cf.output_dir,
+            sent_label_list=self.processor.get_sent_labels(),
+            max_seq_length=cf.max_seq_length,
+            tokenizer=tokenizer,
+            predict_tag=cf.predict_tag)
+
+        predicts = [{
+            "input_ids": feature.input_ids,
+            "input_masks": feature.input_masks,
+            "sent_label_id": feature.sent_label_id,
+            "sent_predict_id": predict["sent_predict_id"],
+            "sent_predict_score": predict["sent_predict_score"],
+            "sent_predict_prob": predict["sent_predict_prob"].tolist()
+        } for feature, predict in zip(predict_features, result)]
+
+        predict_recorder.record(predicts)
+
+if __name__ == "__main__":
+    xlnet_cls = XLNetClsModel()
+    xlnet_cls.set_mode(tf.estimator.ModeKeys.TRAIN)
+    xlnet_cls.train()
